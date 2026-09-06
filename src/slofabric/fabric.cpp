@@ -741,6 +741,7 @@ Result<EvaluationResult> SloFabric::evaluate(ServiceId service, WorkloadId workl
     ev.st.budget_state = std::nullopt;
     ev.st.burn = std::nullopt;
     if (acc.has_budget) {
+      if (acc.budget.window_rolled(now)) acc.budget.reset_window(now);
       ev.st.budget_state = acc.budget.state();
       ev.st.burn = acc.budget.classify_burn(now);
     }

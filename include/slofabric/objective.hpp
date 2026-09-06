@@ -215,6 +215,15 @@ inline UnitKind expected_unit_for(Dimension d) noexcept {
 }
 
 inline bool Objective::target_unit_matches_dimension() const {
+  if (dim == Dimension::Throughput) {
+    switch (rate_tag) {
+      case RateTag::Requests: return unit_kind_of(target) == UnitKind::RequestsPerSecond;
+      case RateTag::Tokens: return unit_kind_of(target) == UnitKind::TokensPerSecond;
+      case RateTag::Bytes: return unit_kind_of(target) == UnitKind::BytesPerSecond;
+      case RateTag::Operations: return unit_kind_of(target) == UnitKind::OperationsPerSecond;
+    }
+    return false;
+  }
   return unit_kind_of(target) == expected_unit_for(dim);
 }
 
