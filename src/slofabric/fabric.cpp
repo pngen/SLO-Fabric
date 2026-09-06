@@ -5,6 +5,7 @@
 #include <deque>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -171,6 +172,12 @@ struct SloFabric::Impl {
   std::uint64_t evaluation_counter = 0;
   std::uint64_t enforcement_counter = 0;
   std::uint64_t dispatch_counter = 0;
+
+  // Thread-safety: every public SloFabric operation acquires this mutex, so a
+  // SloFabric instance is safe for concurrent use by multiple threads. Lock
+  // order is always this mutex only; no external call or I/O is performed while
+  // it is held (save/load/dispatch release it before any external call).
+  mutable std::mutex mtx;
 
   explicit Impl(std::shared_ptr<IClock> c) : clock(std::move(c)) {
     if (!clock) clock = std::make_shared<MonotonicClock>();
@@ -442,12 +449,13 @@ SloFabric::SloFabric(std::shared_ptr<IClock> c) : impl_(std::make_unique<Impl>(s
 SloFabric::~SloFabric() = default;
 SloFabric::SloFabric(SloFabric&&) noexcept = default;
 SloFabric& SloFabric::operator=(SloFabric&&) noexcept = default;
-void SloFabric::set_clock(std::shared_ptr<IClock> c) noexcept { impl_->clock = std::move(c); if (!impl_->clock) impl_->clock = std::make_shared<MonotonicClock>(); }
+void SloFabric::set_clock(std::shared_ptr<IClock> c) noexcept { std::lock_guard<std::mutex> lk(impl_->mtx); impl_->clock = std::move(c); if (!impl_->clock) impl_->clock = std::make_shared<MonotonicClock>(); }
 
 // ---------------------------------------------------------------------------
 // Policy / contract lifecycle
 // ---------------------------------------------------------------------------
 Status SloFabric::set_policy(SloPolicy policy) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   auto it = impl_->policies.find(policy.id);
   if (it != impl_->policies.end() && it->second.gen >= policy.gen)
     return policy_superseded("policy generation must increase");
@@ -456,6 +464,7 @@ Status SloFabric::set_policy(SloPolicy policy) {
 }
 
 Status SloFabric::add_contract(const SloContract& contract) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   if (contract.objectives.empty()) return objective_invalid("contract has no objectives");
   for (const auto& o : contract.objectives) {
     if (!o.id.valid()) return objective_invalid("objective id required");
@@ -472,6 +481,7 @@ Status SloFabric::add_contract(const SloContract& contract) {
 }
 
 Status SloFabric::activate_contract(SloContractId id, Duration now) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   auto it = impl_->contracts.find(id);
   if (it == impl_->contracts.end()) return not_found("unknown contract");
   it->second.lifecycle = ContractLifecycle::Active;
@@ -479,6 +489,7 @@ Status SloFabric::activate_contract(SloContractId id, Duration now) {
   return ok();
 }
 Status SloFabric::suspend_contract(SloContractId id, Duration now) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   (void)now;
   auto it = impl_->contracts.find(id);
   if (it == impl_->contracts.end()) return not_found("unknown contract");
@@ -486,6 +497,7 @@ Status SloFabric::suspend_contract(SloContractId id, Duration now) {
   return ok();
 }
 Status SloFabric::expire_contract(SloContractId id, Duration now) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   auto it = impl_->contracts.find(id);
   if (it == impl_->contracts.end()) return not_found("unknown contract");
   it->second.lifecycle = ContractLifecycle::Expired;
@@ -493,6 +505,7 @@ Status SloFabric::expire_contract(SloContractId id, Duration now) {
   return ok();
 }
 Status SloFabric::supersede_contract(const SloContract& replacement, Duration now) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   (void)now;
   auto it = impl_->contracts.find(replacement.id);
   if (it != impl_->contracts.end()) {
@@ -503,6 +516,7 @@ Status SloFabric::supersede_contract(const SloContract& replacement, Duration no
   return ok();
 }
 Status SloFabric::retire_contract(SloContractId id, Duration now) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   (void)now;
   auto it = impl_->contracts.find(id);
   if (it == impl_->contracts.end()) return not_found("unknown contract");
@@ -510,6 +524,7 @@ Status SloFabric::retire_contract(SloContractId id, Duration now) {
   return ok();
 }
 std::optional<SloContract> SloFabric::find_contract(SloContractId id) const {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   auto it = impl_->contracts.find(id);
   if (it == impl_->contracts.end()) return std::nullopt;
   return it->second;
@@ -538,6 +553,7 @@ bool unit_compatible(const Objective& o, const EvidenceRecord& e) {
 }  // namespace
 
 Status SloFabric::ingest(const EvidenceRecord& e, Duration now) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   (void)now;
   Status n = impl_->note_evidence(e.id);
   if (!n.ok()) return n;
@@ -599,6 +615,7 @@ Status SloFabric::ingest(const EvidenceRecord& e, Duration now) {
 }
 
 Status SloFabric::record_recovery_event(ObjectiveId id, RecoveryEventPhase phase, Duration time) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   ObjectiveAccumulator* acc = nullptr;
   const Objective* def = nullptr;
   for (auto& cid : impl_->contracts)
@@ -618,6 +635,7 @@ Status SloFabric::record_recovery_event(ObjectiveId id, RecoveryEventPhase phase
 }
 
 Status SloFabric::ingest_violation_event(ObjectiveId id, Duration now) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   (void)now;
   ObjectiveAccumulator* acc = nullptr;
   for (auto& cid : impl_->contracts)
@@ -633,6 +651,7 @@ Status SloFabric::ingest_violation_event(ObjectiveId id, Duration now) {
 // Budget
 // ---------------------------------------------------------------------------
 Status SloFabric::set_objective_budget(ObjectiveId id, Count total, Duration window) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   const Objective* def = nullptr;
   for (auto& cid : impl_->contracts)
     for (auto& o : cid.second.objectives)
@@ -690,6 +709,7 @@ std::uint64_t stable_hash(const std::string& s) {
 }  // namespace
 
 Result<EvaluationResult> SloFabric::evaluate(ServiceId service, WorkloadId workload, Duration now) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   const SloContract* c = nullptr;
   for (auto& kv : impl_->contracts) {
     const SloContract& cand = kv.second;
@@ -896,6 +916,7 @@ Result<EvaluationResult> SloFabric::evaluate(ServiceId service, WorkloadId workl
 // Enforcement lifecycle
 // ---------------------------------------------------------------------------
 Result<EnforcementReceipt> SloFabric::authorize(const EnforcementIntent& intent, Duration now) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   if (intent.epoch != impl_->epoch)
     return Result<EnforcementReceipt>(stale_authority("intent coordinator epoch is stale"));
   if (intent.action == EnforcementAction::NoAction)
@@ -943,11 +964,16 @@ Result<EnforcementReceipt> SloFabric::authorize(const EnforcementIntent& intent,
 }
 
 Status SloFabric::dispatch(const EnforcementIntent& intent, ReferenceEnforcementSink& sink) {
-  ++impl_->dispatch_counter;
+  {
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    ++impl_->dispatch_counter;
+  }
+  // External adapter call happens without holding the fabric lock.
   return sink.dispatch(intent.action, intent);
 }
 
 Status SloFabric::transition(EnforcementId id, EnforcementLifecycle to, Duration now) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   (void)now;
   for (auto& rc : impl_->enforcement_history) {
     if (rc.id == id) {
@@ -961,6 +987,7 @@ Status SloFabric::transition(EnforcementId id, EnforcementLifecycle to, Duration
 }
 
 Status SloFabric::complete_enforcement(EnforcementId id, Duration now) {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   (void)now;
   for (auto& rc : impl_->enforcement_history) {
     if (rc.id == id) {
@@ -980,31 +1007,37 @@ Status SloFabric::complete_enforcement(EnforcementId id, Duration now) {
 // ---------------------------------------------------------------------------
 Status SloFabric::save(const std::filesystem::path& path) const {
   DurableState st;
-  st.epoch = impl_->epoch;
-  for (auto& kv : impl_->policies) st.policies.push_back(kv.second);
-  for (auto& kv : impl_->contracts) st.contracts.push_back(kv.second);
-  for (auto& kv : impl_->accumulators) {
-    PersistedObjectiveState ps;
-    ps.objective_id = kv.first;
-    ps.objective_gen = kv.second.def.gen;
-    ps.budget_total = kv.second.has_budget ? kv.second.budget.total() : Count(0);
-    ps.budget_consumed = kv.second.has_budget ? kv.second.budget.consumed() : Count(0);
-    ps.budget_window = kv.second.has_budget ? kv.second.budget.window() : Duration(0);
-    ps.budget_window_start = kv.second.has_budget ? kv.second.budget.window_start() : Duration(0);
-    ps.last_state = kv.second.last_state;
-    ps.last_state_time = kv.second.last_state_time;
-    ps.cooldown_until = kv.second.cooldown_until;
-    st.objective_states.push_back(ps);
+  {
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    st.epoch = impl_->epoch;
+    for (auto& kv : impl_->policies) st.policies.push_back(kv.second);
+    for (auto& kv : impl_->contracts) st.contracts.push_back(kv.second);
+    for (auto& kv : impl_->accumulators) {
+      PersistedObjectiveState ps;
+      ps.objective_id = kv.first;
+      ps.objective_gen = kv.second.def.gen;
+      ps.budget_total = kv.second.has_budget ? kv.second.budget.total() : Count(0);
+      ps.budget_consumed = kv.second.has_budget ? kv.second.budget.consumed() : Count(0);
+      ps.budget_window = kv.second.has_budget ? kv.second.budget.window() : Duration(0);
+      ps.budget_window_start = kv.second.has_budget ? kv.second.budget.window_start() : Duration(0);
+      ps.last_state = kv.second.last_state;
+      ps.last_state_time = kv.second.last_state_time;
+      ps.cooldown_until = kv.second.cooldown_until;
+      st.objective_states.push_back(ps);
+    }
+    st.enforcement_history = impl_->enforcement_history;
+    st.evaluation_history = impl_->evaluation_history;
   }
-  st.enforcement_history = impl_->enforcement_history;
-  st.evaluation_history = impl_->evaluation_history;
+  // File I/O happens without holding the fabric lock.
   return save_state(path, st);
 }
 
 Status SloFabric::load(const std::filesystem::path& path) {
   DurableState st;
+  // File I/O happens without holding the fabric lock.
   Status s = load_state(path, st);
   if (!s.ok()) return s;
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   // Advance coordinator epoch (restart).
   impl_->epoch = st.epoch.next();
   impl_->policies.clear();
@@ -1039,11 +1072,12 @@ Status SloFabric::load(const std::filesystem::path& path) {
 // ---------------------------------------------------------------------------
 // Inspection / query
 // ---------------------------------------------------------------------------
-CoordinatorEpoch SloFabric::current_epoch() const noexcept { return impl_->epoch; }
-std::size_t SloFabric::contract_count() const noexcept { return impl_->contracts.size(); }
-std::size_t SloFabric::evaluation_count() const noexcept { return impl_->evaluation_history.size(); }
+CoordinatorEpoch SloFabric::current_epoch() const noexcept { std::lock_guard<std::mutex> lk(impl_->mtx); return impl_->epoch; }
+std::size_t SloFabric::contract_count() const noexcept { std::lock_guard<std::mutex> lk(impl_->mtx); return impl_->contracts.size(); }
+std::size_t SloFabric::evaluation_count() const noexcept { std::lock_guard<std::mutex> lk(impl_->mtx); return impl_->evaluation_history.size(); }
 
 std::vector<ObjectiveStatus> SloFabric::objective_statuses(SloContractId id) const {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   std::vector<ObjectiveStatus> out;
   auto it = impl_->contracts.find(id);
   if (it == impl_->contracts.end()) return out;
@@ -1055,7 +1089,10 @@ std::vector<ObjectiveStatus> SloFabric::objective_statuses(SloContractId id) con
       os.state = ait->second.last_state;
       os.freshness = Freshness::Unknown;
       os.sample_count = Count(static_cast<std::int64_t>(ait->second.window.size()));
-      if (ait->second.has_budget) os.budget_state = ait->second.budget.state();
+      if (ait->second.has_budget) {
+        os.budget_state = ait->second.budget.state();
+        os.budget_consumed = ait->second.budget.consumed();
+      }
     } else {
       os.state = ComplianceState::InsufficientEvidence;
       os.freshness = Freshness::Unknown;
@@ -1067,6 +1104,7 @@ std::vector<ObjectiveStatus> SloFabric::objective_statuses(SloContractId id) con
 }
 
 Result<EvaluationRecord> SloFabric::get_evaluation(EvaluationId id) const {
+  std::lock_guard<std::mutex> lk(impl_->mtx);
   auto it = impl_->evaluation_by_id.find(id);
   if (it == impl_->evaluation_by_id.end()) return Result<EvaluationRecord>(not_found("evaluation not found"));
   return it->second;

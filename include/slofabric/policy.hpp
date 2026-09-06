@@ -18,7 +18,6 @@ namespace slofabric {
 enum class PolicyMode : std::uint8_t {
   Lexicographic,        // resolve by (hard, priority, severity, tie-break)
   HardThenSoft,         // hard constraints first, then soft ranking
-  Pareto,               // maintain Pareto frontier, deterministic selection
 };
 
 constexpr std::string_view policy_mode_name(PolicyMode m) noexcept {
@@ -26,7 +25,6 @@ constexpr std::string_view policy_mode_name(PolicyMode m) noexcept {
   switch (m) {
     case M::Lexicographic: return "lexicographic";
     case M::HardThenSoft: return "hard_then_soft";
-    case M::Pareto: return "pareto";
   }
   return "unknown_policy_mode";
 }

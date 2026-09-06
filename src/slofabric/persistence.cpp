@@ -1,9 +1,17 @@
 #include "slofabric/persistence.hpp"
 
+#include <atomic>
 #include <cstring>
 #include <fstream>
 #include <limits>
 #include <type_traits>
+
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+#endif
 
 #include "slofabric/binary.hpp"
 #include "slofabric/crc32.hpp"
@@ -187,7 +195,7 @@ bool decode_policy(ByteReader& r, SloPolicy& p) {
   if (!read_id(r, p.id)) return false;
   if (!read_gen(r, p.gen)) return false;
   std::uint8_t b;
-  if (!r.read_u8(b) || b > 2) return false; p.mode = static_cast<PolicyMode>(b);
+  if (!r.read_u8(b) || b > 1) return false; p.mode = static_cast<PolicyMode>(b);
   if (!r.read_u8(b) || b > 2) return false; p.tie_break = static_cast<TieBreak>(b);
   if (!read_string(r, p.name)) return false;
   if (!read_string(r, p.description)) return false;
@@ -333,8 +341,12 @@ Result<DurableState> deserialize_state(const std::uint8_t* data, std::size_t n) 
 }
 
 Status save_bytes_atomic(const std::filesystem::path& path, const std::vector<std::uint8_t>& bytes) {
+  // Use a unique temp name per call so concurrent saves to the same path do not
+  // collide on the temporary file. The final path is always replaced with a
+  // complete, verified file (last writer wins, never a torn state).
+  static std::atomic<std::uint64_t> g_tmp_seq{0};
   std::filesystem::path tmp = path;
-  tmp += ".tmp";
+  tmp += ".tmp." + std::to_string(g_tmp_seq.fetch_add(1));
   {
     std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
     if (!out) return internal("cannot open temp file for write");
@@ -342,15 +354,19 @@ Status save_bytes_atomic(const std::filesystem::path& path, const std::vector<st
     out.flush();
     if (!out) return internal("write failed");
   }
+#if defined(_WIN32)
+  // Atomic replace (concurrency-safe: a concurrent writer simply replaces the
+  // file with a complete, verified one; last writer wins, never a torn state).
+  if (::MoveFileExW(tmp.wstring().c_str(), path.wstring().c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    return ok();
+  return internal("atomic replace failed");
+#else
   std::error_code ec;
   std::filesystem::rename(tmp, path, ec);
-  if (ec) {
-    // Fall back to copy+remove if rename across volumes fails.
-    std::filesystem::remove(path, ec);
-    std::filesystem::rename(tmp, path, ec);
-    if (ec) return internal("atomic replace failed: " + ec.message());
-  }
+  if (ec) return internal("atomic replace failed: " + ec.message());
   return ok();
+#endif
 }
 
 Status save_state(const std::filesystem::path& path, const DurableState& state) {

@@ -55,8 +55,14 @@ struct ObjectiveStatus {
   Freshness freshness;
   Count sample_count;
   std::optional<BudgetState> budget_state;
+  std::optional<Count> budget_consumed;
 };
 
+// Thread-safety contract: SloFabric is internally thread-safe. All public methods that
+// read or mutate shared state serialize through one internal mutex, so a single instance
+// may be used concurrently by multiple threads. No public method holds the lock while making
+// an external call (dispatch) or blocking I/O (save/load), and no public method re-enters the
+// lock. See README "Thread safety".
 class SloFabric {
  public:
   SloFabric();

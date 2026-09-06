@@ -112,7 +112,7 @@ never becomes unconditional compliance.
 
 ## Multi-objective policy and binding constraint
 
-Policy is first-class, versioned state (`Lexicographic`, `HardThenSoft`, `Pareto`). The default
+Policy is first-class, versioned state (`Lexicographic`, `HardThenSoft`). The default
 resolves deterministically: hard constraints first, then violation severity, then priority, then a
 deterministic tie-break. The **binding constraint** is the highest-ranked objective; all other
 non-compliant hard objectives are preserved as secondary constraints. It is never an unexplained
@@ -212,12 +212,24 @@ An independent downstream consumer uses `find_package(SLOFabric CONFIG REQUIRED)
   single/multi-objective evaluation, percentile, budget, binding, explanation, lookups, replay,
   persistence).
 
+## Thread safety
+
+The public `SloFabric` core is **internally thread-safe**. Every public method that reads or
+mutates shared state (contract/policy registration, contract lifecycle, evidence ingestion,
+recovery events, budgets, evaluation, enforcement authorization/transition/completion,
+persistence, and inspection/query) acquires a single internal mutex, so concurrent use of one
+`SloFabric` instance by multiple threads is safe. Lock discipline is explicit: the fabric never
+holds its lock while performing an external call or blocking I/O (`dispatch` releases it before
+the adapter call; `save` builds the durable snapshot under the lock and writes the file outside
+it; `load` reads the file outside the lock and applies it under the lock), and no public method
+re-enters the lock. A multi-threaded stress test exercises concurrent evidence ingestion, budget
+consumption, and evaluation and proves exact accounting (no lost updates) under concurrency.
+
 ## Limitations
 
 - The availability accumulator is cumulative over the window reported by evidence sources; SLO
   Fabric does not implement the distributed telemetry pipeline that would produce it.
-- Multi-objective resolution is `HardThenSoft` by default; the `Pareto` mode is declared but not
-  the default selection engine.
+- Multi-objective resolution is `HardThenSoft` (and `Lexicographic`) only; no Pareto mode is shipped.
 - Recovery-time evaluation relies on explicit authoritative/restored/verified boundaries from an
   adjacent Recovery Planner / Failover Fabric; SLO Fabric does not duplicate recovery planning.
 - Cost evaluation requires typed cost evidence; without a cost model it returns insufficient
