@@ -47,6 +47,7 @@ set(SLOFABRIC_SOURCES
   src/slofabric/version.cpp
   src/slofabric/persistence.cpp
   src/slofabric/fabric.cpp
+  src/slofabric/net.cpp
 )
 
 add_library(slofabric STATIC ${SLOFABRIC_SOURCES})
@@ -56,6 +57,9 @@ target_include_directories(slofabric PUBLIC
   $<INSTALL_INTERFACE:include>)
 target_compile_features(slofabric PUBLIC cxx_std_20)
 slofabric_apply_warnings(slofabric)
+if(WIN32)
+  target_link_libraries(slofabric PUBLIC ws2_32)
+endif()
 
 # ---------------------------------------------------------------------------
 # Tests

@@ -211,7 +211,8 @@ Freshness evaluate_freshness(const ObjectiveAccumulator& acc, Duration now) {
     return Freshness::Current;
   }
   if (acc.uses_recovery) {
-    if (!acc.recovery.authoritative) return Freshness::Expired;
+    // No failure in progress -> current (objectively satisfied); a failure in
+    // progress is also current but measured from the authoritative boundary.
     return Freshness::Current;
   }
   if (acc.uses_cost) {
@@ -254,7 +255,12 @@ bool compute_measured(ObjectiveAccumulator& acc, Duration now, double& value,
     return true;
   }
   if (o.dim == Dimension::RecoveryTime) {
-    if (!acc.recovery.authoritative) { detail = "no authoritative recovery boundary"; return false; }
+    if (!acc.recovery.authoritative) {
+      // No failure in progress: the recovery-time objective is satisfied.
+      value = 0.0; sufficient = true; samples = Count(0);
+      detail = "no recovery in progress";
+      return true;
+    }
     value = static_cast<double>(acc.recovery.current_recovery_duration(now).as_ns());
     sufficient = true; samples = Count(1);
     return true;
