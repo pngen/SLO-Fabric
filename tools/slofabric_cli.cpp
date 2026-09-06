@@ -64,9 +64,9 @@ bool parse_double(std::string_view s, double& out) {
 }
 
 template <typename IdT>
-IdT make_id(const std::string& s, bool& ok) {
+IdT make_id(const std::string& s) {
   std::uint64_t v = 0;
-  ok = parse_u64(s, v);
+  parse_u64(s, v);
   return IdT(v);
 }
 
@@ -564,7 +564,6 @@ int main(int argc, char* argv[]) {
         return 2;
       }
       g_at_set = true;
-      ++i;
       continue;
     }
     if (subcmd.empty()) {
@@ -572,7 +571,6 @@ int main(int argc, char* argv[]) {
     } else {
       args.push_back(a);
     }
-    ++i;
   }
 
   if (subcmd.empty()) {

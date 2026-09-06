@@ -1,1 +1,3 @@
-# CLI tool is added below.
+add_executable(slofabric_cli slofabric_cli.cpp)
+target_link_libraries(slofabric_cli PRIVATE slofabric)
+slofabric_apply_warnings(slofabric_cli)

@@ -1,1 +1,3 @@
-# Benchmarks are added below.
+add_executable(slofabric_benchmark benchmark_slofabric.cpp)
+target_link_libraries(slofabric_benchmark PRIVATE slofabric)
+slofabric_apply_warnings(slofabric_benchmark)

@@ -109,7 +109,6 @@ int main() {
   e1.epoch = CoordinatorEpoch(1);
   e1.time = seconds(1);
   e1.value = RequestsPerSecond(150);
-  e1.rate_tag = RateTag::Requests;
   fabric.ingest(e1, e1.time);
 
   Result<EvaluationResult> r1 = fabric.evaluate(ServiceId(100), WorkloadId(200), seconds(2));
@@ -127,7 +126,6 @@ int main() {
   e2.epoch = CoordinatorEpoch(1);
   e2.time = seconds(2);
   e2.value = RequestsPerSecond(40);
-  e2.rate_tag = RateTag::Requests;
   fabric.ingest(e2, e2.time);
 
   Result<EvaluationResult> r2 = fabric.evaluate(ServiceId(100), WorkloadId(200), seconds(3));
