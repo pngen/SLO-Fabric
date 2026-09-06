@@ -38,19 +38,21 @@ static void add_policy_prop(SloFabric& f) {
 TEST("property: percentile exact nearest-rank on known distribution") {
   // Feed 100 samples 0..99ns. p99 ≈ 98ns (nearest-rank: ceil(0.99*100)-1 = 98).
   SloFabric f; add_policy_prop(f);
-  REQUIRE(f.add_contract(make_latency_contract("c")).ok());
+  // Target well above the sample range so the p99 value is comfortably compliant.
+  REQUIRE(f.add_contract(make_latency_contract("c", seconds(1))).ok());
   for (int i = 0; i < 100; ++i) {
     EvidenceRecord e; e.id = EvidenceId(i + 1); e.gen = EvidenceGen(1);
     e.dimension = Dimension::Latency; e.objective_id = ObjectiveId(1); e.objective_gen = ObjectiveGen(1);
     e.source = SourceBootId(1); e.source_gen = SourceBootGen(1); e.epoch = CoordinatorEpoch(1);
-    e.time = milliseconds(i); e.value = Duration(i * 1000000LL);
+    e.time = milliseconds(i); e.value = Duration(i * 1000000LL);  // 0..99 ms, ns
     f.ingest(e, e.time);
   }
   auto r = f.evaluate(ServiceId(100), WorkloadId(200), milliseconds(200));
   REQUIRE(r.ok());
   auto cur = r.value_unchecked().explanation.objectives[0].current_value;
   REQUIRE(cur.has_value());
-  CHECK(numeric_of(*cur) >= 98000000.0);   // p99 of 0..99 is high enough
+  // p99 over the in-window (bounded) samples must be >= 98ms (nearest-rank).
+  CHECK(numeric_of(*cur) >= 98000000.0);
   CHECK(r.value_unchecked().explanation.compliance == ComplianceState::Compliant);
 }
 

@@ -97,6 +97,7 @@ class SampleWindow {
       case WindowType::Sliding: {
         push(time, value, seq);
         evict_by_age(time);
+        while (samples_.size() > capacity_) evict_front();
         last_time_ = time;
         return IngestStatus::Accepted;
       }
@@ -165,10 +166,23 @@ class SampleWindow {
   double last_value() const { return samples_.empty() ? 0.0 : samples_.back().value; }
 
   double quantile(double p) const {
-    // Rebuild quantile store from current samples (bounded) and select.
-    QuantileStore q(capacity_);
-    for (const auto& s : samples_) q.add(s.value);
-    return q.quantile(p);
+    // Deterministic nearest-rank over ALL current in-window samples (the deque is
+    // already bounded by the window). Never silently drops in-window samples.
+    std::vector<double> s;
+    s.reserve(samples_.size());
+    for (const auto& x : samples_) s.push_back(x.value);
+    std::sort(s.begin(), s.end());
+    if (s.empty()) return 0.0;
+    p = std::clamp(p, 0.0, 1.0);
+    std::size_t idx;
+    if (p <= 0.0) idx = 0;
+    else {
+      double rank = std::ceil(p * static_cast<double>(s.size()));
+      if (rank < 1.0) rank = 1.0;
+      idx = static_cast<std::size_t>(rank) - 1;
+      if (idx >= s.size()) idx = s.size() - 1;
+    }
+    return s[idx];
   }
   bool quantile_sufficient(double p) const { return !samples_.empty() && std::ceil(p * samples_.size()) >= 1.0; }
 
